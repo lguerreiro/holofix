@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holofix - Painel do Especialista</title>
+<link rel="stylesheet" href="/static/estilo.css">
+<style>
+  body { background: #f4f6f8; color: #1d2733; }
+  header { background: #13315c; color: #fff; padding: 14px 24px; display: flex; align-items: baseline; gap: 16px; }
+  header h1 { margin: 0; font-size: 22px; }
+  header span { opacity: .8; font-size: 14px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px 24px; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  h2 { font-size: 18px; margin: 0 0 10px; }
+  .card { background: #fff; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card.aberto { border-left: 5px solid #e8a317; }
+  .card.respondido { border-left: 5px solid #2e9e5b; opacity: .75; }
+  .meta { font-size: 13px; color: #5b6b7b; }
+  .msg { font-size: 18px; font-weight: 600; margin: 6px 0; }
+  .passo { background: #eef3f8; padding: 6px 10px; border-radius: 6px; font-size: 14px; margin: 6px 0; }
+  textarea { width: 100%; font: inherit; padding: 8px; border-radius: 6px; border: 1px solid #c5ced8; min-height: 60px; }
+  .rapidas { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .rapidas button { font-size: 13px; padding: 4px 8px; border-radius: 12px; border: 1px solid #c5ced8; background: #f8fafc; }
+  .enviar { background: #13315c; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 10px; font-size: 14px; border-bottom: 1px solid #eef1f4; }
+  th { background: #e9eef4; }
+  .status { padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+  .st-em_andamento { background: #dbeafe; color: #1e40af; }
+  .st-aguardando_ajuda { background: #fef3c7; color: #92400e; }
+  .st-concluida { background: #dcfce7; color: #166534; }
+  .vazio { color: #5b6b7b; font-style: italic; }
+</style>
+</head>
+<body>
+<header><h1>Holofix · Painel do Especialista</h1><span>atualiza a cada 3 segundos</span></header>
+<main>
+  <section>
+    <h2>Pedidos de ajuda</h2>
+    <div id="erro-ajudas"></div>
+    <div id="ajudas"></div>
+  </section>
+  <section>
+    <h2>Ordens de serviço</h2>
+    <div id="erro-ordens"></div>
+    <table>
+      <thead><tr><th>#</th><th>Técnico</th><th>Máquina</th><th>Progresso</th><th>Status</th></tr></thead>
+      <tbody id="ordens"></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="/static/api.js"></script>
+<script>
+const RESPOSTAS_RAPIDAS = [
+  "Confira o manual na página 12.",
+  "Pode seguir, está correto.",
+  "Pare e aguarde, estou indo até aí.",
+  "Envie uma foto, por favor.",
+];
+
+const STATUS_TEXTO = {
+  em_andamento: "Em andamento",
+  aguardando_ajuda: "Aguardando ajuda",
+  concluida: "Concluída",
+};
+
+// Textos que o especialista está digitando (para não perder quando a tela atualiza)
+const rascunhos = {};
+
+async function carregarAjudas() {                        // MISSÃO 5
+  const r = await chamarApi("GET", "/api/ajudas");
+  const caixa = document.getElementById("ajudas");
+  document.getElementById("erro-ajudas").innerHTML = r.ok ? "" : `<div class="aviso-todo">${r.erro}</div>`;
+  if (!r.ok) return;
+
+  // abertos primeiro, depois os mais recentes
+  const lista = r.dados.sort((a, b) => (a.status === b.status ? b.id - a.id : a.status === "aberto" ? -1 : 1));
+  if (lista.length === 0) { caixa.innerHTML = `<p class="vazio">Nenhum pedido ainda.</p>`; return; }
+
+  // não redesenha enquanto alguém digita
+  if (document.activeElement && document.activeElement.tagName === "TEXTAREA") return;
+
+  caixa.innerHTML = lista.map((p) => `
+    <div class="card ${p.status}">
+      <div class="meta">#${p.id} · ${p.criado_em} · ${p.ordem.tecnico} · ${p.ordem.maquina_codigo} ${p.ordem.maquina_nome}</div>
+      <div class="msg">"${p.mensagem}"</div>
+      <div class="passo">Passo ${p.passo + 1} de ${p.ordem.total_passos} · ${p.ordem.procedimento}</div>
+      ${p.status === "aberto" ? `
+        <div class="rapidas">${RESPOSTAS_RAPIDAS.map((t) =>
+          `<button onclick="preencher(${p.id}, '${t}')">${t}</button>`).join("")}</div>
+        <textarea id="resp-${p.id}" oninput="rascunhos[${p.id}]=this.value"
+          placeholder="Escreva a orientação para o técnico...">${rascunhos[p.id] || ""}</textarea>
+        <button class="enviar" onclick="responder(${p.id})">Enviar para o óculos</button>
+      ` : `<div class="meta">Respondido em ${p.respondido_em}: <b>${p.resposta}</b></div>`}
+    </div>`).join("");
+}
+
+function preencher(id, texto) {
+  rascunhos[id] = texto;
+  document.getElementById("resp-" + id).value = texto;
+}
+
+async function responder(id) {                           // MISSÃO 5
+  const texto = (rascunhos[id] || "").trim();
+  const r = await chamarApi("POST", `/api/ajudas/${id}/responder`, { resposta: texto });
+  if (!r.ok) { alert(r.erro); return; }
+  delete rascunhos[id];
+  document.activeElement.blur();
+  atualizar();
+}
+
+async function carregarOrdens() {                        // MISSÃO 5
+  const r = await chamarApi("GET", "/api/ordens");
+  document.getElementById("erro-ordens").innerHTML = r.ok ? "" : `<div class="aviso-todo">${r.erro}</div>`;
+  if (!r.ok) return;
+  const corpo = document.getElementById("ordens");
+  if (r.dados.length === 0) { corpo.innerHTML = `<tr><td colspan="5" class="vazio">Nenhuma ordem ainda.</td></tr>`; return; }
+  corpo.innerHTML = r.dados.slice().reverse().map((o) => `
+    <tr>
+      <td>${o.id}</td><td>${o.tecnico}</td><td>${o.maquina_codigo}</td>
+      <td>${o.passo_atual + 1}/${o.total_passos}</td>
+      <td><span class="status st-${o.status}">${STATUS_TEXTO[o.status] || o.status}</span></td>
+    </tr>`).join("");
+}
+
+function atualizar() { carregarAjudas(); carregarOrdens(); }
+atualizar();
+setInterval(atualizar, 3000);
+</script>
+</body>
+</html>

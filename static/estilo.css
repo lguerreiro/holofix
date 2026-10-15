@@ -1,0 +1,8 @@
+/* estilo.css - estilos compartilhados (já pronto) */
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button { font: inherit; cursor: pointer; }
+.aviso-todo {
+  background: #fff3cd; color: #664d03; border: 1px solid #ffda6a;
+  padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 14px;
+}

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holofix - Óculos</title>
+<link rel="stylesheet" href="/static/estilo.css">
+<style>
+  /* No óculos, PRETO = transparente. Por isso o fundo é preto e o texto é claro. */
+  body { background: #222; color: #e8ffe8; display: flex; flex-direction: column; align-items: center; padding: 16px; }
+  body.real { background: #000; padding: 0; }
+  #lente {
+    width: 480px; height: 480px; max-width: 100%; background: #000;
+    border: 3px solid #555; border-radius: 24px; padding: 20px; overflow: hidden;
+    display: flex; flex-direction: column; position: relative;
+  }
+  body.real #lente { border: none; border-radius: 0; width: 100vw; height: 100vh; }
+  h1 { font-size: 26px; margin: 0 0 8px; color: #7CFFB2; }
+  .pequeno { font-size: 16px; color: #9fc9a9; }
+  .passo-num { font-size: 18px; color: #7CFFB2; margin-bottom: 6px; }
+  .passo-texto { font-size: 30px; line-height: 1.25; font-weight: 600; flex: 1; }
+  .barra { height: 8px; background: #1d3b27; border-radius: 4px; margin: 10px 0; }
+  .barra > div { height: 100%; background: #7CFFB2; border-radius: 4px; transition: width .3s; }
+  .lista { list-style: none; padding: 0; margin: 8px 0; }
+  .lista li { font-size: 22px; padding: 8px 10px; border-radius: 8px; margin-bottom: 4px; }
+  .lista li.sel { background: #7CFFB2; color: #000; }
+  .dica { font-size: 15px; color: #9fc9a9; border-top: 1px solid #1d3b27; padding-top: 8px; }
+  .banner { font-size: 18px; padding: 8px 10px; border-radius: 8px; margin-top: 8px; }
+  .banner.espera { background: #3b3200; color: #ffe066; }
+  .banner.resposta { background: #002f4a; color: #8fd6ff; }
+  .banner.erro { background: #4a0000; color: #ffb3b3; }
+  input { font: inherit; font-size: 20px; padding: 6px 8px; width: 100%; background: #111; color: #e8ffe8; border: 1px solid #3a6; border-radius: 6px; }
+  #controles { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  #controles button { padding: 8px 14px; border-radius: 8px; border: 1px solid #666; background: #333; color: #eee; }
+  body.real #controles, body.real #titulo-sim { display: none; }
+  #titulo-sim { color: #aaa; margin-bottom: 8px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div id="titulo-sim">Simulação da lente do óculos inteligente. Use as setas do teclado e Enter, ou os botões abaixo.</div>
+<div id="lente"></div>
+
+<div id="controles">
+  <button onclick="tecla('ArrowUp')">↑</button>
+  <button onclick="tecla('ArrowLeft')">←</button>
+  <button onclick="tecla('Enter')">OK</button>
+  <button onclick="tecla('ArrowRight')">→</button>
+  <button onclick="tecla('ArrowDown')">↓</button>
+</div>
+
+<script src="/static/api.js"></script>
+<script>
+// ------------------------------------------------------------------
+// ESTADO DA TELA
+// ------------------------------------------------------------------
+const params = new URLSearchParams(location.search);
+if (params.get("real") === "1") document.body.classList.add("real");
+
+let tela = "inicio";          // "inicio" | "passo" | "ajuda" | "fim"
+let maquinas = [];            // vem de GET /api/maquinas
+let selecionada = 0;          // item selecionado nas listas
+let ordem = null;             // ordem de serviço atual (vem da API)
+let mensagemErro = "";
+let tecnico = params.get("tecnico") || "Técnico 1";
+
+// Mensagens rápidas: no óculos não há teclado, então o técnico escolhe numa lista
+const MENSAGENS_AJUDA = [
+  "Não encontro a peça",
+  "A peça parece danificada",
+  "Não entendi este passo",
+  "Barulho ou cheiro estranho",
+];
+
+const lente = document.getElementById("lente");
+
+// ------------------------------------------------------------------
+// DESENHO DAS TELAS
+// ------------------------------------------------------------------
+function desenhar() {
+  let html = "";
+
+  if (tela === "inicio") {
+    html += `<h1>Holofix</h1>`;
+    html += `<div class="pequeno">Técnico:</div>
+             <input id="campo-tecnico" value="${tecnico}" onchange="tecnico=this.value">`;
+    html += `<div class="pequeno" style="margin-top:10px">Escolha a máquina:</div>`;
+    html += `<ul class="lista">`;
+    maquinas.forEach((m, i) => {
+      html += `<li class="${i === selecionada ? "sel" : ""}" onclick="selecionada=${i};tecla('Enter')">
+                 ${m.codigo} · ${m.nome}</li>`;
+    });
+    html += `</ul><div style="flex:1"></div>`;
+    html += `<div class="dica">↑ ↓ escolher · OK iniciar manutenção</div>`;
+  }
+
+  if (tela === "passo" && ordem) {
+    const pct = ((ordem.passo_atual + 1) / ordem.total_passos) * 100;
+    const ultimo = ordem.passo_atual === ordem.total_passos - 1;
+    html += `<div class="pequeno">${ordem.maquina_codigo} · ${ordem.procedimento}</div>`;
+    html += `<div class="barra"><div style="width:${pct}%"></div></div>`;
+    html += `<div class="passo-num">Passo ${ordem.passo_atual + 1} de ${ordem.total_passos}</div>`;
+    html += `<div class="passo-texto">${ordem.texto_passo}</div>`;
+    html += desenharBannerAjuda();
+    html += `<div class="dica">← voltar · ${ultimo ? "→ CONCLUIR" : "→ próximo"} · ↓ pedir ajuda</div>`;
+  }
+
+  if (tela === "ajuda") {
+    html += `<h1>Pedir ajuda</h1><div class="pequeno">O especialista verá seu passo atual.</div>`;
+    html += `<ul class="lista">`;
+    MENSAGENS_AJUDA.forEach((msg, i) => {
+      html += `<li class="${i === selecionada ? "sel" : ""}" onclick="selecionada=${i};tecla('Enter')">${msg}</li>`;
+    });
+    html += `</ul><div style="flex:1"></div>`;
+    html += `<div class="dica">↑ ↓ escolher · OK enviar · ← cancelar</div>`;
+  }
+
+  if (tela === "fim" && ordem) {
+    html += `<h1>Manutenção concluída</h1>`;
+    html += `<div class="passo-texto" style="font-size:24px">${ordem.maquina_nome}</div>`;
+    html += `<div class="pequeno">Início: ${ordem.inicio}<br>Fim: ${ordem.fim || "-"}</div>`;
+    html += `<div style="flex:1"></div><div class="dica">OK nova manutenção</div>`;
+  }
+
+  if (mensagemErro) html += `<div class="banner erro">${mensagemErro}</div>`;
+  lente.innerHTML = html;
+}
+
+function desenharBannerAjuda() {
+  if (!ordem || !ordem.ajuda) return "";
+  const a = ordem.ajuda;
+  if (a.status === "aberto") return `<div class="banner espera">Aguardando especialista: "${a.mensagem}"</div>`;
+  if (a.status === "respondido" && a.passo === ordem.passo_atual)
+    return `<div class="banner resposta">Especialista: ${a.resposta}</div>`;
+  return "";
+}
+
+// ------------------------------------------------------------------
+// AÇÕES (cada uma chama uma rota da API)
+// ------------------------------------------------------------------
+async function carregarMaquinas() {                    // MISSÃO 1
+  const r = await chamarApi("GET", "/api/maquinas");
+  if (r.ok) { maquinas = r.dados; mensagemErro = ""; }
+  else mensagemErro = r.erro;
+  desenhar();
+}
+
+async function iniciarOrdem() {                         // MISSÃO 2
+  const m = maquinas[selecionada];
+  if (!m) return;
+  const r = await chamarApi("POST", "/api/ordens", { maquina_codigo: m.codigo, tecnico: tecnico });
+  if (r.ok) { ordem = r.dados; tela = "passo"; mensagemErro = ""; }
+  else mensagemErro = r.erro;
+  desenhar();
+}
+
+async function acaoOrdem(acao) {                        // MISSÃO 3: "avancar" | "voltar" | "concluir"
+  const r = await chamarApi("POST", `/api/ordens/${ordem.id}/${acao}`);
+  if (r.ok) {
+    ordem = r.dados; mensagemErro = "";
+    if (ordem.status === "concluida") tela = "fim";
+  } else mensagemErro = r.erro;
+  desenhar();
+}
+
+async function enviarAjuda() {                          // MISSÃO 4
+  const r = await chamarApi("POST", `/api/ordens/${ordem.id}/ajuda`, { mensagem: MENSAGENS_AJUDA[selecionada] });
+  if (r.ok) { mensagemErro = ""; await atualizarOrdem(); }
+  else mensagemErro = r.erro;
+  tela = "passo";
+  desenhar();
+}
+
+async function atualizarOrdem() {                       // MISSÃO 2 (consulta)
+  if (!ordem) return;
+  const r = await chamarApi("GET", `/api/ordens/${ordem.id}`);
+  if (r.ok) ordem = r.dados;
+}
+
+// A cada 3 segundos, busca a ordem de novo para ver se o especialista respondeu
+setInterval(async () => {
+  if (tela === "passo") { await atualizarOrdem(); desenhar(); }
+}, 3000);
+
+// ------------------------------------------------------------------
+// CONTROLES: teclado do PC, botões do simulador ou touchpad do óculos
+// (num óculos de verdade, o touchpad da haste faria o papel das setas e do Enter)
+// ------------------------------------------------------------------
+function tecla(t) {
+  if (tela === "inicio") {
+    if (t === "ArrowDown") selecionada = Math.min(selecionada + 1, maquinas.length - 1);
+    if (t === "ArrowUp") selecionada = Math.max(selecionada - 1, 0);
+    if (t === "Enter") return iniciarOrdem();
+  } else if (tela === "passo") {
+    const ultimo = ordem.passo_atual === ordem.total_passos - 1;
+    if (t === "ArrowRight") return acaoOrdem(ultimo ? "concluir" : "avancar");
+    if (t === "ArrowLeft") return acaoOrdem("voltar");
+    if (t === "ArrowDown") { tela = "ajuda"; selecionada = 0; }
+  } else if (tela === "ajuda") {
+    if (t === "ArrowDown") selecionada = Math.min(selecionada + 1, MENSAGENS_AJUDA.length - 1);
+    if (t === "ArrowUp") selecionada = Math.max(selecionada - 1, 0);
+    if (t === "ArrowLeft" || t === "Escape") tela = "passo";
+    if (t === "Enter") return enviarAjuda();
+  } else if (tela === "fim") {
+    if (t === "Enter") { ordem = null; tela = "inicio"; selecionada = 0; }
+  }
+  desenhar();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") {
+    if (e.key === "Enter" || e.key === "ArrowDown") e.target.blur();
+    return;
+  }
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(e.key)) {
+    e.preventDefault();
+    tecla(e.key);
+  }
+});
+
+carregarMaquinas();
+</script>
+</body>
+</html>
